@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 # =================CONFIGURATION=================
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "qwen3:4b-thinking " #"nemotron:latest"
+MODEL_NAME = "llama3:8b" #"nemotron:latest"
 INPUT_PDF_FOLDER = "./papers"
 OUTPUT_VAULT_FOLDER = "./obsidian_vault"
 CONTEXT_WINDOW_LIMIT = 25000
@@ -221,6 +221,7 @@ This is the central hub for all research notes generated from PDFs.
         4. Focus on technical depth: Hyperparameters, Loss Functions, Architecture details, Data processing.
         5. If explaining a concept, provide a concrete example.
         6. Write raw markdown, no code fences around the entire output.
+        7. prepare the content as if it's going to be read by an engineer who will implement the paper, a policymaker who will regulate based on the paper, and a student who is learning from the paper. Include sections or notes specifically for each of these audiences where relevant.
         """
         
         prompt = f"""
@@ -271,7 +272,11 @@ This is the central hub for all research notes generated from PDFs.
                 {"filename": "000_Main_Summary.md", "topic": "Summary and Overview"},
                 {"filename": "001_Methodology.md", "topic": "Methods and Techniques"},
                 {"filename": "002_Experiments.md", "topic": "Experiments and Results"},
-                {"filename": "003_Notes.md", "topic": "Critical Analysis and Notes"}
+                {"filename": "003_Notes.md", "topic": "Critical Analysis and Notes"},
+                {"filename": "004_EngineerNotes.md", "topic": "Engineer Notes"},
+                {"filename": "005_PolicyMakersNotes.md", "topic": "Policy Makers Analysis and Notes"},
+                {"filename": "006_StudentsNotes.md", "topic": "Students Analysis and Notes"},
+                {"filename": "007_ExecutiveSummaryNotes.md", "topic": "Executive Summary and Notes"}
             ]
             
         file_names = [item['filename'] for item in structure]
