@@ -41,7 +41,7 @@ from tqdm import tqdm
 # ========================= CONFIG =========================
 INPUT_FOLDER = "papers"          # Folder containing your PDFs
 VAULT_ROOT = "obsidian_knowledge_vault"   # Output Obsidian vault folder
-MODEL = "nemotron:latest"                 # Must be pulled in Ollama
+MODEL = "llama3:8b" #"nemotron:latest"                 # Must be pulled in Ollama
 MAX_TEXT_TOKENS = 80000                   # Safety limit for context (nemotron handles large contexts well)
 # ========================================================
 
