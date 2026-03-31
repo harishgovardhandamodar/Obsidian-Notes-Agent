@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 # =================CONFIGURATION=================
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3:8b" #"nemotron:latest"
+MODEL_NAME = "nemotron-cascade-2:latest" # "llama3:8b" #"nemotron:latest"
 INPUT_PDF_FOLDER = "./papers"
 OUTPUT_VAULT_FOLDER = "./obsidian_vault"
 CONTEXT_WINDOW_LIMIT = 25000
@@ -67,7 +67,7 @@ This is the central hub for all research notes generated from PDFs.
         }
         
         try:
-            response = self.session.post(OLLAMA_URL, json=payload, timeout=120)
+            response = self.session.post(OLLAMA_URL, json=payload, timeout=12000)
             response.raise_for_status()
             return response.json()['response']
         except Exception as e:
@@ -155,7 +155,11 @@ This is the central hub for all research notes generated from PDFs.
             {"filename": "001_Architecture.md", "topic": "Model architecture, diagrams, layers"},
             {"filename": "002_Finetuning_Method.md", "topic": "Specific fine-tuning techniques used"},
             {"filename": "003_Experiments.md", "topic": "Datasets, metrics, results"},
-            {"filename": "004_Critique_And_Notes.md", "topic": "Critical analysis, future work"}
+            {"filename": "004_Critique_And_Notes.md", "topic": "Critical analysis, future work"},
+            {"filename": "004_EngineerNotes.md", "topic": "Engineer Notes"},
+            {"filename": "005_PolicyMakersNotes.md", "topic": "Policy Makers Analysis and Notes"},
+            {"filename": "006_StudentsNotes.md", "topic": "Students Analysis and Notes"},
+            {"filename": "007_ExecutiveSummaryNotes.md", "topic": "Executive Summary and Notes"}
         ]
         
         Adjust based on the paper's actual content. Use double quotes only. No trailing commas.
