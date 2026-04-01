@@ -1,14 +1,18 @@
-# ingest_pdf.py
+# ingest_pdf.py (Corrected)
 import os
 import fitz  # PyMuPDF
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.core import Settings
+from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.core import StorageContext
 
 # Configuration
 EMBED_MODEL = "nomic-embed-text"
-PDF_FOLDER = "./data/pdfs"
+PDF_FOLDER = "../Papers"
+CHROMA_PERSIST_DIR = "./data/chroma_storage"
+CHROMA_COLLECTION_NAME = "pdf_rag"
 
 Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL)
 
@@ -49,6 +53,16 @@ def ingest_pdfs():
         print(f"Created PDF folder: {PDF_FOLDER}")
         return
     
+    # Initialize Chroma Vector Store
+    chroma_client = ChromaVectorStore(
+        persist_dir=CHROMA_PERSIST_DIR,
+        collection_name=CHROMA_COLLECTION_NAME,
+    )
+    
+    storage_context = StorageContext.from_defaults(vector_store=chroma_client)
+    index = VectorStoreIndex.from_documents([], storage_context=storage_context)
+    
+    # Process and add PDFs
     nodes = []
     for filename in os.listdir(PDF_FOLDER):
         if filename.endswith(".pdf"):
@@ -59,18 +73,9 @@ def ingest_pdfs():
     
     print(f"Indexed {len(nodes)} chunks from PDFs")
     
-    # Save to Chroma
-    from llama_index.core import StorageContext
-    from llama_index.vector_stores.chroma import ChromaVectorStore
-    
-    chroma_client = ChromaVectorStore.from_params(
-        persist_dir="./data/chroma_storage",
-        db_name="pdf_rag",
-    )
-    
-    storage_context = StorageContext.from_defaults(vector_store=chroma_client)
-    index = VectorStoreIndex(nodes, storage_context=storage_context)
-    index.storage_context.persist(persist_dir="./data/chroma_storage")
+    # Update index with new nodes
+    index.insert_nodes(nodes)
+    index.storage_context.persist(persist_dir=CHROMA_PERSIST_DIR)
     print("✅ PDFs indexed successfully!")
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# rag_engine.py
+# rag_engine.py (Corrected)
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -8,10 +8,13 @@ import os
 EMBED_MODEL = "nomic-embed-text"
 Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL)
 
+CHROMA_PERSIST_DIR = "./data/chroma_storage"
+CHROMA_COLLECTION_NAME = "pdf_rag"
+
 def load_index():
-    chroma_client = ChromaVectorStore.from_params(
-        persist_dir="./data/chroma_storage",
-        db_name="pdf_rag",
+    chroma_client = ChromaVectorStore(
+        persist_dir=CHROMA_PERSIST_DIR,
+        collection_name=CHROMA_COLLECTION_NAME,
     )
     storage_context = StorageContext.from_defaults(vector_store=chroma_client)
     return VectorStoreIndex.from_vector_store(chroma_client, storage_context=storage_context)
@@ -23,7 +26,6 @@ def query_rag(query: str, top_k: int = 3):
     return str(response)
 
 def query_by_page(page_num: int, context: str = ""):
-    """Query specific page number from PDFs."""
     index = load_index()
     query_engine = index.as_query_engine(similarity_top_k=1)
     query = f"Page {page_num} content"
@@ -33,19 +35,12 @@ def query_by_page(page_num: int, context: str = ""):
     return str(response)
 
 def get_pdf_info():
-    """Return info about indexed PDFs."""
-    from llama_index.core import StorageContext
-    from llama_index.vector_stores.chroma import ChromaVectorStore
-    
-    chroma_client = ChromaVectorStore.from_params(
-        persist_dir="./data/chroma_storage",
-        db_name="pdf_rag",
+    chroma_client = ChromaVectorStore(
+        persist_dir=CHROMA_PERSIST_DIR,
+        collection_name=CHMA_COLLECTION_NAME,
     )
-    storage_context = StorageContext.from_defaults(vector_store=chroma_client)
-    index = VectorStoreIndex.from_vector_store(chroma_client, storage_context=storage_context)
-    
     return {
-        "total_nodes": index.vector_store.size(),
+        "total_nodes": chroma_client.count(),
         "pdf_folder": "./data/pdfs",
         "embedding_model": EMBED_MODEL,
     }

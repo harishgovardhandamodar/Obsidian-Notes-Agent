@@ -1,10 +1,14 @@
-# mcp_server.py
+# mcp_server.py (Corrected)
 import asyncio
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 from rag_engine import query_rag, query_by_page, get_pdf_info
 import os
+
+# Configuration
+CHROMA_PERSIST_DIR = "./data/chroma_storage"
+CHROMA_COLLECTION_NAME = "pdf_rag"
 
 server = Server("local-codex-rag")
 
