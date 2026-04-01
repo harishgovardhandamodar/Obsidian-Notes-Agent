@@ -1,0 +1,13 @@
+# Core
+llama-index-core==0.10.10
+llama-index-embeddings-ollama==0.2.0
+llama-index-vector-stores-chroma==0.2.0
+llama-index-readers-file==0.1.5
+
+# PDF Processing
+pymupdf==1.23.26  # Fast PDF parsing
+python-magic==0.4.27  # File type detection
+
+# MCP & UI
+mcp==0.0.18
+streamlit==1.28.0
