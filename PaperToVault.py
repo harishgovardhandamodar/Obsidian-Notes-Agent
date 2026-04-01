@@ -67,7 +67,7 @@ This is the central hub for all research notes generated from PDFs.
         }
         
         try:
-            response = self.session.post(OLLAMA_URL, json=payload, timeout=12000)
+            response = self.session.post(OLLAMA_URL, json=payload, timeout=300000)
             response.raise_for_status()
             return response.json()['response']
         except Exception as e:
@@ -224,8 +224,14 @@ This is the central hub for all research notes generated from PDFs.
         3. Use Mermaid.js code blocks for diagrams (flowcharts, architecture).
         4. Focus on technical depth: Hyperparameters, Loss Functions, Architecture details, Data processing.
         5. If explaining a concept, provide a concrete example.
-        6. Write raw markdown, no code fences around the entire output.
-        7. prepare the content as if it's going to be read by an engineer who will implement the paper, a policymaker who will regulate based on the paper, and a student who is learning from the paper. Include sections or notes specifically for each of these audiences where relevant.
+        6. Include sections for engineers, policymakers, students where relevant
+        7. Focus on hyperparameters, loss functions, architecture, data processing details
+        8. If explaining a concept, provide a concrete example.
+        9. Use Mermaid.js code blocks for diagrams (flowcharts, architecture).
+        10. Focus on technical depth: Hyperparameters, Loss Functions, Architecture details, Data processing.
+        11. If explaining a concept, provide a concrete example.
+        12. Write raw markdown, no code fences around the entire output.
+        13. prepare the content as if it's going to be read by an engineer who will implement the paper, a policymaker who will regulate based on the paper, and a student who is learning from the paper. Include sections or notes specifically for each of these audiences where relevant.
         """
         
         prompt = f"""

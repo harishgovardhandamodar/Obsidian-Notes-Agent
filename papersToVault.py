@@ -10,12 +10,12 @@ from tqdm import tqdm
 
 # =================CONFIGURATION=================
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "nemotron:latest"
+MODEL_NAME = "nemotron-cascade-2:latest" # "llama3:8b" #"nemotron:latest"
 INPUT_PDF_FOLDER = "./papers"
-OUTPUT_VAULT_FOLDER = "./obsidian_vault"
-CONTEXT_WINDOW_LIMIT = 8000  # REDUCED from 25000
-OLLAMA_TIMEOUT = 300  # INCREASED from 120 to 300 seconds
-MAX_RETRIES = 3
+OUTPUT_VAULT_FOLDER = "./obsidian_vault_output"
+CONTEXT_WINDOW_LIMIT = 8000
+OLLAMA_TIMEOUT = 300000
+MAX_RETRIES = 10
 # ===============================================
 
 class ResearchAgent:
@@ -57,16 +57,15 @@ This is the central hub for all research notes generated from PDFs.
             return None
 
     def call_ollama(self, prompt, system_prompt="", retry_count=0):
-        """Call Ollama with retry logic and progress indication."""
         payload = {
             "model": MODEL_NAME,
             "prompt": prompt,
             "system": system_prompt,
             "stream": False,
             "options": {
-                "temperature": 0.2,
+                "temperature": 0.1,  # Lower for more deterministic output
                 "num_ctx": 4096,
-                "num_predict": 2048
+                "num_predict": 1024
             }
         }
         
@@ -74,11 +73,7 @@ This is the central hub for all research notes generated from PDFs.
         print(f"    [Attempt {attempt}/{MAX_RETRIES}] Calling Ollama...", end=" ", flush=True)
         
         try:
-            response = self.session.post(
-                OLLAMA_URL, 
-                json=payload, 
-                timeout=OLLAMA_TIMEOUT
-            )
+            response = self.session.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
             response.raise_for_status()
             result = response.json()['response']
             print("✓ Done")
@@ -92,10 +87,6 @@ This is the central hub for all research notes generated from PDFs.
                 return self.call_ollama(prompt, system_prompt, attempt)
             return None
             
-        except requests.exceptions.ConnectionError:
-            print("✗ Connection Error - Is Ollama running?")
-            return None
-            
         except Exception as e:
             print(f"✗ Error: {e}")
             if attempt < MAX_RETRIES:
@@ -103,10 +94,40 @@ This is the central hub for all research notes generated from PDFs.
                 return self.call_ollama(prompt, system_prompt, attempt)
             return None
 
+    def _validate_structure_schema(self, items):
+        """
+        CRITICAL FIX: Validate that each item has 'filename' and 'topic' fields.
+        Returns only valid items.
+        """
+        valid_items = []
+        for item in items:
+            if isinstance(item, dict):
+                # Check for required fields
+                has_filename = 'filename' in item and item['filename']
+                has_topic = 'topic' in item and item['topic']
+                
+                if has_filename and has_topic:
+                    # Ensure filename ends with .md
+                    fn = str(item['filename']).strip()
+                    if not fn.endswith('.md'):
+                        fn = fn + '.md'
+                    valid_items.append({
+                        "filename": fn,
+                        "topic": str(item['topic']).strip()
+                    })
+                else:
+                    # Log what fields we actually got
+                    keys = list(item.keys()) if isinstance(item, dict) else 'unknown'
+                    print(f"    [WARN] Invalid schema - got fields: {keys}, expected: filename, topic")
+        
+        return valid_items
+
     def _extract_json_objects(self, text):
-        """Extract JSON from LLM response with multiple strategies."""
+        """Extract JSON and validate schema."""
         if not text:
             return None
+        
+        print(f"    [DEBUG] Response length: {len(text)} chars")
         
         results = []
         
@@ -114,128 +135,152 @@ This is the central hub for all research notes generated from PDFs.
         array_match = re.search(r'\[\s*\{.*?\}\s*\]', text, re.DOTALL)
         if array_match:
             json_str = array_match.group(0)
-            parsed = self._try_parse_json(json_str)
-            if parsed and isinstance(parsed, list):
-                results.extend(parsed)
+            print(f"    [DEBUG] Found JSON array pattern")
+            
+            # Clean the JSON string
+            json_str = re.sub(r'```json\s*', '', json_str, flags=re.IGNORECASE)
+            json_str = re.sub(r'```\s*', '', json_str)
+            json_str = json_str.strip()
+            json_str = json_str.replace("'", '"')
+            json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+            
+            try:
+                parsed = json.loads(json_str)
+                if isinstance(parsed, list):
+                    results.extend(parsed)
+                elif isinstance(parsed, dict):
+                    results.append(parsed)
+                print(f"    [DEBUG] JSON parsed successfully")
+            except json.JSONDecodeError as e:
+                print(f"    [DEBUG] JSON parse error: {e}")
+                print(f"    [DEBUG] Problematic JSON:\n{json_str[:500]}")
         
-        # Strategy 2: Look for individual objects
-        obj_pattern = r'\{[^{}]*?"filename"[^{}]*?\}'
-        objects = re.findall(obj_pattern, text, re.DOTALL | re.IGNORECASE)
+        # Strategy 2: Look for individual objects with filename field
+        if not results:
+            obj_pattern = r'\{[^{}]*?"filename"[^{}]*?\}'
+            objects = re.findall(obj_pattern, text, re.DOTALL | re.IGNORECASE)
+            print(f"    [DEBUG] Found {len(objects)} objects with 'filename'")
+            
+            for obj_str in objects:
+                obj_str = obj_str.replace("'", '"')
+                obj_str = re.sub(r',\s*}', '}', obj_str)
+                try:
+                    parsed = json.loads(obj_str)
+                    results.append(parsed)
+                except:
+                    continue
         
-        for obj_str in objects:
-            parsed = self._try_parse_json(obj_str)
-            if parsed and isinstance(parsed, dict):
-                results.append(parsed)
+        # Strategy 3: Line-by-line extraction for simple patterns
+        if not results:
+            lines = text.split('\n')
+            for line in lines:
+                if 'filename' in line.lower() and '.md' in line:
+                    filename_match = re.search(r'["\']([^"\']*\.md)["\']', line)
+                    topic_match = re.search(r'["\']([^"\']+)["\']', line)
+                    
+                    if filename_match:
+                        item = {"filename": filename_match.group(1), "topic": "Section"}
+                        if topic_match and topic_match.group(1) != item["filename"]:
+                            item["topic"] = topic_match.group(1)
+                        results.append(item)
         
-        # Strategy 3: Line-by-line extraction
-        lines = text.split('\n')
-        for line in lines:
-            if 'filename' in line.lower() and '.md' in line:
-                filename_match = re.search(r'["\']([^"\']*\.md)["\']', line)
-                topic_match = re.search(r'["\']([^"\']+)["\']', line)
-                
-                if filename_match:
-                    item = {"filename": filename_match.group(1), "topic": "Section"}
-                    if topic_match and topic_match.group(1) != item["filename"]:
-                        item["topic"] = topic_match.group(1)
-                    results.append(item)
+        # CRITICAL: Validate schema
+        if results:
+            valid = self._validate_structure_schema(results)
+            if valid:
+                print(f"    [DEBUG] ✓ Validated {len(valid)} items with correct schema")
+                return valid
+            else:
+                print(f"    [DEBUG] ✗ No items passed schema validation")
         
-        # Deduplicate
-        final_results = []
-        seen = set()
-        for item in results:
-            if isinstance(item, dict) and 'filename' in item:
-                fn = item['filename']
-                if fn not in seen and fn.endswith('.md'):
-                    seen.add(fn)
-                    item['topic'] = item.get('topic', f'Section: {fn}')
-                    final_results.append(item)
-        
-        return final_results if final_results else None
-
-    def _try_parse_json(self, json_str):
-        """Parse JSON with cleanup."""
-        if not json_str:
-            return None
-        
-        json_str = re.sub(r'```json\s*', '', json_str, flags=re.IGNORECASE)
-        json_str = re.sub(r'```\s*', '', json_str)
-        json_str = json_str.strip()
-        json_str = json_str.replace("'", '"')
-        json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
-        json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
-        
-        try:
-            return json.loads(json_str)
-        except:
-            return None
+        return None
 
     def generate_file_structure(self, paper_text, paper_title):
-        """Generate file structure with minimal context."""
+        """
+        Generate file structure with EXTREMELY explicit format requirements.
+        """
+        # Use a very constrained system prompt with examples
         system_prompt = """
-        Output ONLY a JSON array. Example:
-        [{"filename": "000_Summary.md", "topic": "Summary"}, {"filename": "001_Methods.md", "topic": "Methods"}]
+        You MUST output a JSON array with this EXACT schema:
         
-        Rules: double quotes only, no markdown, no extra text, 4-6 files max.
+        [
+            {"filename": "000_Main_Summary.md", "topic": "High level overview, abstract, core contribution"},
+            {"filename": "001_Architecture.md", "topic": "Model architecture, diagrams, layers"},
+            {"filename": "002_Finetuning_Method.md", "topic": "Specific fine-tuning techniques used"},
+            {"filename": "003_Experiments.md", "topic": "Datasets, metrics, results"},
+            {"filename": "004_Critique_And_Notes.md", "topic": "Critical analysis, future work"},
+            {"filename": "004_EngineerNotes.md", "topic": "Engineer Notes"},
+            {"filename": "005_PolicyMakersNotes.md", "topic": "Policy Makers Analysis and Notes"},
+            {"filename": "006_StudentsNotes.md", "topic": "Students Analysis and Notes"},
+            {"filename": "007_ExecutiveSummaryNotes.md", "topic": "Executive Summary and Notes"}
+        ]
+        
+        CRITICAL REQUIREMENTS:
+        - Each object MUST have exactly two fields: "filename" and "topic"
+        - "filename" MUST end with .md
+        - "filename" MUST start with a number like 000_, 001_, 002_
+        - Use DOUBLE quotes only, no single quotes
+        - NO other fields allowed (no "step", no "objective", etc.)
+        - NO markdown code fences
+        - NO explanatory text
+        - Output ONLY the JSON array, nothing else
+        - Create 4-6 files maximum
+        
+        WRONG (do NOT output this):
+        [{"step": "...", "objective": "..."}]
+        
+        RIGHT (output this format):
+        [{"filename": "000_Summary.md", "topic": "..."}]
         """
         
-        # Extract only key sections to reduce context
+        # Extract key sections to reduce context
         sections = self._extract_key_sections(paper_text)
         context = f"""
         Title: {paper_title}
         
         Abstract/Intro:
-        {sections.get('abstract', 'N/A')[:1500]}
+        {sections.get('abstract', 'N/A')[:1000]}
         
-        Key Sections:
-        {sections.get('methods', 'N/A')[:1500]}
+        Methods:
+        {sections.get('methods', 'N/A')[:1000]}
         """
         
         prompt = f"""
-        Create file structure for this paper:
+        Analyze this research paper and create a file structure for Obsidian notes.
         
         {context}
         
-        Output ONLY JSON array:
+        Output ONLY the JSON array with filename and topic fields:
         """
         
-        print("    -> Generating structure (this may take 30-60s)...")
+        print("    -> Generating structure (30-60s)...")
         response = self.call_ollama(prompt, system_prompt)
         
         if not response:
             return None
         
+        print("    -> Parsing and validating JSON...")
         structure = self._extract_json_objects(response)
         
         if structure:
-            validated = []
-            for i, item in enumerate(structure[:6]):  # Max 6 files
-                if isinstance(item, dict) and 'filename' in item:
-                    fn = item['filename'].strip()
-                    if not fn.endswith('.md'):
-                        fn = fn + '.md'
-                    if fn not in [v['filename'] for v in validated]:
-                        validated.append({"filename": fn, "topic": item.get('topic', f'Section {i+1}')})
-            return validated if validated else None
+            print(f"    -> ✓ Structure validated: {len(structure)} files")
+            for item in structure:
+                print(f"       - {item['filename']}: {item['topic'][:50]}")
+            return structure
         
+        print("    -> ✗ Structure extraction failed")
         return None
 
     def _extract_key_sections(self, text):
         """Extract key sections from paper to reduce context."""
-        sections = {
-            'abstract': '',
-            'methods': '',
-            'results': ''
-        }
+        sections = {'abstract': '', 'methods': '', 'results': ''}
         
-        # Look for common section headers
         patterns = {
             'abstract': [r'abstract[:\s]*(.*?)(?=introduction|1\.|introduction)', r'introduction[:\s]*(.*?)(?=method|2\.|method)'],
             'methods': [r'method[:\s]*(.*?)(?=result|3\.|experiment)', r'methodology[:\s]*(.*?)(?=result|3\.|experiment)'],
             'results': [r'result[:\s]*(.*?)(?=conclusion|discussion|5\.|conclusion)']
         }
         
-        text_lower = text.lower()
         for section, pattern_list in patterns.items():
             for pattern in pattern_list:
                 match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
@@ -243,26 +288,31 @@ This is the central hub for all research notes generated from PDFs.
                     sections[section] = match.group(1).strip()[:2000]
                     break
         
-        # If no sections found, use first 5000 chars
         if not any(sections.values()):
             sections['abstract'] = text[:5000]
         
         return sections
 
     def generate_content(self, paper_text, paper_title, file_plan_item, all_filenames):
-        """Generate content for a single file."""
         system_prompt = """
         You are an expert LLM researcher writing Obsidian notes.
         
         FORMAT:
-        1. YAML frontmatter: --- tags: [] ---
-        2. Use [[filename]] for links
+        1. Start with YAML frontmatter: --- tags: [] ---
+        2. Use [[filename]] for links to other notes
         3. Use ```mermaid for diagrams
         4. Technical depth on LLMs/fine-tuning
-        5. Raw markdown output
+        5. Raw markdown output only
+        6. Include sections for engineers, policymakers, students where relevant
+        7. Focus on hyperparameters, loss functions, architecture, data processing details
+        8. If explaining a concept, provide a concrete example.
+        9. Use Mermaid.js code blocks for diagrams (flowcharts, architecture).
+        10. Focus on technical depth: Hyperparameters, Loss Functions, Architecture details, Data processing.
+        11. If explaining a concept, provide a concrete example.
+        12. Write raw markdown, no code fences around the entire output.
+        13. prepare the content as if it's going to be read by an engineer who will implement the paper, a policymaker who will regulate based on the paper, and a student who is learning from the paper. Include sections or notes specifically for each of these audiences where relevant.
         """
         
-        # Get relevant section based on filename
         section_text = self._get_relevant_section(paper_text, file_plan_item['filename'])
         
         prompt = f"""
@@ -275,36 +325,33 @@ This is the central hub for all research notes generated from PDFs.
         {section_text}
         
         Write complete markdown for {file_plan_item['filename']}.
-        Link to other files with [[filename]]. Include mermaid diagram if applicable.
+        Link to other files with [[filename]]. Include mermaid diagram.
         """
         
         response = self.call_ollama(prompt, system_prompt)
         return response
 
     def _get_relevant_section(self, text, filename):
-        """Get relevant text section based on filename."""
         filename_lower = filename.lower()
         
         if 'summary' in filename_lower or '000' in filename_lower:
             return text[:8000]
         elif 'arch' in filename_lower or '001' in filename_lower:
-            match = re.search(r'(architecture|model|design)[:\s]*(.*?)(?=method|experiment|result)', text, re.IGNORECASE | re.DOTALL)
+            match = re.search(r'(architecture|model|design)[:\s]*(.*?)(?=method|experiment)', text, re.IGNORECASE | re.DOTALL)
             return match.group(0)[:8000] if match else text[4000:12000]
         elif 'method' in filename_lower or '002' in filename_lower:
-            match = re.search(r'(method|methodology|approach)[:\s]*(.*?)(?=result|experiment|evaluation)', text, re.IGNORECASE | re.DOTALL)
+            match = re.search(r'(method|methodology|approach)[:\s]*(.*?)(?=result|experiment)', text, re.IGNORECASE | re.DOTALL)
             return match.group(0)[:8000] if match else text[8000:16000]
         elif 'experiment' in filename_lower or '003' in filename_lower:
-            match = re.search(r'(experiment|result|evaluation)[:\s]*(.*?)(?=conclusion|discussion)', text, re.IGNORECASE | re.DOTALL)
+            match = re.search(r'(experiment|result|evaluation)[:\s]*(.*?)(?=conclusion)', text, re.IGNORECASE | re.DOTALL)
             return match.group(0)[:8000] if match else text[12000:20000]
         else:
             return text[-8000:]
 
     def update_moc(self, paper_title, folder_name):
         link = f"[[{folder_name}/{folder_name} - 000_Summary|{paper_title}]]"
-        entry = f"- {link}\n"
-        
         with open(self.moc_path, "a", encoding="utf-8") as f:
-            f.write(entry)
+            f.write(f"- {link}\n")
 
     def process_paper(self, pdf_path):
         print(f"\n{'='*60}")
@@ -333,13 +380,18 @@ This is the central hub for all research notes generated from PDFs.
                 {"filename": "001_Architecture.md", "topic": "Model Architecture"},
                 {"filename": "002_Methodology.md", "topic": "Methods & Fine-tuning"},
                 {"filename": "003_Experiments.md", "topic": "Experiments & Results"},
-                {"filename": "004_Analysis.md", "topic": "Analysis & Future Work"}
+                {"filename": "004_Analysis.md", "topic": "Analysis & Future Work"},
+                {"filename": "005_Notes.md", "topic": "Critical Analysis and Notes"},
+                {"filename": "006_EngineerNotes.md", "topic": "Engineer Notes"},
+                {"filename": "007_PolicyMakersNotes.md", "topic": "Policy Makers Analysis and Notes"},
+                {"filename": "008_StudentsNotes.md", "topic": "Students Analysis and Notes"},
+                {"filename": "009_ExecutiveSummaryNotes.md", "topic": "Executive Summary and Notes"}
             ]
         
         file_names = [item['filename'] for item in structure]
         print(f"✓ Structure: {len(structure)} files")
         
-        print(f"\n→ Step 3: Generating Content (expect 30-60s per file)...")
+        print(f"\n→ Step 3: Generating Content (30-60s per file)...")
         files_created = 0
         for i, item in enumerate(structure):
             print(f"   [{i+1}/{len(structure)}] {item['filename']}...", end=" ", flush=True)
@@ -370,7 +422,6 @@ This is the central hub for all research notes generated from PDFs.
         
         if not pdf_files:
             print(f"\n✗ No PDF files found in {INPUT_PDF_FOLDER}")
-            print(f"Please add PDF files to the '{INPUT_PDF_FOLDER}' folder\n")
             return
 
         print(f"\n{'#'*60}")
@@ -378,7 +429,6 @@ This is the central hub for all research notes generated from PDFs.
         print(f"{'#'*60}")
         print(f"Model: {MODEL_NAME}")
         print(f"Timeout: {OLLAMA_TIMEOUT}s")
-        print(f"Retries: {MAX_RETRIES}")
         print(f"Papers: {len(pdf_files)}")
         print(f"{'#'*60}\n")
         
@@ -397,26 +447,13 @@ if __name__ == "__main__":
     print("RESEARCH PAPER TO OBSIDIAN VAULT CONVERTER")
     print("="*60)
     
-    # Check Ollama
     try:
         test = requests.get("http://localhost:11434/api/tags", timeout=10)
         print("✓ Ollama is running")
     except:
-        print("✗ Ollama is NOT running!")
-        print("  Start with: ollama serve")
+        print("✗ Ollama is NOT running! Start with: ollama serve")
         sys.exit(1)
     
-    # Check model
-    try:
-        tags = test.json().get('models', [])
-        model_names = [m['name'] for m in tags]
-        if not any(MODEL_NAME in m for m in model_names):
-            print(f"⚠ Model '{MODEL_NAME}' not found")
-            print(f"  Pull with: ollama pull {MODEL_NAME}")
-    except:
-        pass
-    
     print("="*60 + "\n")
-    
     agent = ResearchAgent()
     agent.run()
