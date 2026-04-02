@@ -7,3 +7,4 @@ obsidian_vault_1/*
 /obsidian_vault_llama8b/*
 obsidian_vault_output/*
 LangchainRAG/neo4j/*
+*.pyc
