@@ -1,19 +1,23 @@
 # ingest_pdf.py (Corrected)
 import os
-import fitz  # PyMuPDF
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
-from llama_index.core.node_parser import SemanticSplitterNodeParser
+import fitz    # PyMuPDF
+from llama_index.core import (
+    VectorStoreIndex, 
+    StorageContext, 
+    Settings,
+    SimpleDirectoryReader
+)
 from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.core import Settings
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.core import StorageContext
+import chromadb
 
 # Configuration
 EMBED_MODEL = "nomic-embed-text"
-PDF_FOLDER = "../Papers"
+PDF_FOLDER = "./data/pdfs"
 CHROMA_PERSIST_DIR = "./data/chroma_storage"
 CHROMA_COLLECTION_NAME = "pdf_rag"
 
+#  FIX: Set Embedding Model via Settings
 Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL)
 
 def extract_pdf_metadata(pdf_path):
@@ -52,31 +56,29 @@ def ingest_pdfs():
         os.makedirs(PDF_FOLDER)
         print(f"Created PDF folder: {PDF_FOLDER}")
         return
+
+    # ✅ Create PersistentClient explicitly
+    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
     
-    # Initialize Chroma Vector Store
+    # ✅ Initialize ChromaVectorStore with the client
     chroma_client = ChromaVectorStore(
-        persist_dir=CHROMA_PERSIST_DIR,
-        collection_name=CHROMA_COLLECTION_NAME,
+        chroma_client=client,
+        collection_name=CHROMA_COLLECTION_NAME
     )
     
+    # ✅ Create StorageContext
     storage_context = StorageContext.from_defaults(vector_store=chroma_client)
-    index = VectorStoreIndex.from_documents([], storage_context=storage_context)
     
-    # Process and add PDFs
-    nodes = []
-    for filename in os.listdir(PDF_FOLDER):
-        if filename.endswith(".pdf"):
-            pdf_path = os.path.join(PDF_FOLDER, filename)
-            chunks = parse_pdf_to_chunks(pdf_path)
-            for chunk in chunks:
-                nodes.append(chunk)
+    # ✅ Load and index documents
+    documents = SimpleDirectoryReader(PDF_FOLDER).load_data()
     
-    print(f"Indexed {len(nodes)} chunks from PDFs")
+    print(f"Loaded {len(documents)} documents from {PDF_FOLDER}")
     
-    # Update index with new nodes
-    index.insert_nodes(nodes)
+    index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
     index.storage_context.persist(persist_dir=CHROMA_PERSIST_DIR)
+    
     print("✅ PDFs indexed successfully!")
+    print(f"Total nodes indexed: {index.vector_store.size()}")
 
 if __name__ == "__main__":
     ingest_pdfs()

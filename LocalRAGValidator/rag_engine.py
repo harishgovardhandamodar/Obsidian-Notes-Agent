@@ -12,12 +12,14 @@ CHROMA_PERSIST_DIR = "./data/chroma_storage"
 CHROMA_COLLECTION_NAME = "pdf_rag"
 
 def load_index():
+    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
     chroma_client = ChromaVectorStore(
-        persist_dir=CHROMA_PERSIST_DIR,
-        collection_name=CHROMA_COLLECTION_NAME,
+        chroma_client=client,
+        collection_name=CHROMA_COLLECTION_NAME
     )
     storage_context = StorageContext.from_defaults(vector_store=chroma_client)
     return VectorStoreIndex.from_vector_store(chroma_client, storage_context=storage_context)
+
 
 def query_rag(query: str, top_k: int = 3):
     index = load_index()
